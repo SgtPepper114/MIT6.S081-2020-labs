@@ -195,6 +195,16 @@ proc_freepagetable(pagetable_t pagetable, uint64 sz)
   uvmfree(pagetable, sz);
 }
 
+int
+procnum(void)
+{
+  int cnt = 0;
+  for(int i = 0; i < nextpid; i++)
+    if(proc[i].state != UNUSED)
+      cnt++;
+  return cnt;
+}
+
 // a user program that calls exec("/init")
 // od -t xC initcode
 uchar initcode[] = {
@@ -294,6 +304,8 @@ fork(void)
   pid = np->pid;
 
   np->state = RUNNABLE;
+
+  np->mask = p->mask;
 
   release(&np->lock);
 
