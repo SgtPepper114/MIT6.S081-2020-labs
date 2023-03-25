@@ -49,7 +49,6 @@ usertrap(void)
   
   // save user program counter.
   p->trapframe->epc = r_sepc();
-  
   if(r_scause() == 8){
     // system call
 
@@ -65,9 +64,39 @@ usertrap(void)
     intr_on();
 
     syscall();
+    
+  } else if(r_scause() == 15){
+    uint64 va = PGROUNDDOWN(r_stval());
+    if(va >= MAXVA)
+      goto fault;
+    pte_t *pte = walk(p->pagetable, va, 0);
+    uint64 pa = PTE2PA(*pte);
+    uint64 flags = PTE_FLAGS(*pte);
+    char* mem;
+    int pgrefnum;
+    if(!pte || !(*pte & PTE_V) || !(*pte & PTE_COW))
+      goto fault;
+    pgrefnum = kgetpgref((void *)pa);
+    if(pgrefnum > 1){
+      //printf("COW\n");
+      if((mem = kalloc()) == 0){
+	printf("usertrap(): out of memory\n");
+        goto fault;
+      }
+      memmove(mem, (char*)pa, PGSIZE);
+      uvmunmap(p->pagetable, va, 1, 1);
+      if(mappages(p->pagetable, va, PGSIZE, (uint64)mem, flags) != 0){
+        kfree(mem);
+        printf("usertrap(): mappages\n");
+        goto fault;
+      }
+    }
+    *pte |= PTE_W;
+    *pte &= ~PTE_COW;
   } else if((which_dev = devintr()) != 0){
     // ok
   } else {
+    fault:
     printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
     printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
     p->killed = 1;
