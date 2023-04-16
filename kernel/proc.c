@@ -5,6 +5,7 @@
 #include "spinlock.h"
 #include "proc.h"
 #include "defs.h"
+#include "fcntl.h"
 
 struct cpu cpus[NCPU];
 
@@ -127,6 +128,8 @@ found:
     release(&p->lock);
     return 0;
   }
+  
+  memset(&p->vmas, 0, sizeof(p->vmas));
 
   // Set up new context to start executing at forkret,
   // which returns to user space.
@@ -295,6 +298,14 @@ fork(void)
     if(p->ofile[i])
       np->ofile[i] = filedup(p->ofile[i]);
   np->cwd = idup(p->cwd);
+  
+  for(i = 0; i < NVMA; i++){
+    if(p->vmas[i].used){
+      memmove(&np->vmas[i], &p->vmas[i], sizeof(p->vmas[i]));
+      filedup(np->vmas[i].vfile);
+      // don't want to implement copy-on-write
+    }
+  }
 
   safestrcpy(np->name, p->name, sizeof(p->name));
 
@@ -350,6 +361,17 @@ exit(int status)
       struct file *f = p->ofile[fd];
       fileclose(f);
       p->ofile[fd] = 0;
+    }
+  }
+
+  for(int i = 0; i < NVMA; ++i) {
+    if(p->vmas[i].used) {
+      if(p->vmas[i].flags == MAP_SHARED && (p->vmas[i].prot & PROT_WRITE) != 0) {
+        filewrite(p->vmas[i].vfile, p->vmas[i].addr, p->vmas[i].length);
+      }
+      fileclose(p->vmas[i].vfile);
+      uvmunmap(p->pagetable, p->vmas[i].addr, p->vmas[i].length / PGSIZE, 1);
+      p->vmas[i].used = 0;
     }
   }
 
